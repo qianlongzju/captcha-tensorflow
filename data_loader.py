@@ -78,7 +78,7 @@ def _read_images_and_labels(dir_name, flatten, ext='.png', **meta):
 
 def _read_image(filename, flatten, width, height, **extra_meta):
     im = Image.open(filename).convert('L')
-    data = np.asarray(im)
+    data = np.asarray(im) / 255.
     if flatten:
         return data.reshape(width * height)
     return data
