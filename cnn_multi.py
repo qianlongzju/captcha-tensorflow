@@ -4,9 +4,9 @@ import datetime
 import sys
 import tensorflow as tf
 
-import data_loader
+import input_data
 
-MAX_STEPS = 10000
+MAX_STEPS = 20000
 BATCH_SIZE = 50
 
 LOG_DIR = 'log/cnn1-run-%s' % datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -46,9 +46,9 @@ def max_pool_2x2(x):
                           strides=[1, 2, 2, 1], padding='SAME')
 
 
-def main(data_dir):
+def main(_):
     # load data
-    meta, train_data, test_data = data_loader.load_data(data_dir, flatten=False)
+    meta, train_data, test_data = input_data.load_data(FLAGS.data_dir, flatten=False)
     print 'data loaded'
     print 'train images: %s. test images: %s' % (train_data.images.shape[0], test_data.images.shape[0])
 
@@ -61,8 +61,7 @@ def main(data_dir):
     # variable in the graph for input data
     with tf.name_scope('input'):
         x = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH])
-        y1_ = tf.placeholder(tf.float32, [None, LABEL_SIZE])
-        y2_ = tf.placeholder(tf.float32, [None, LABEL_SIZE])
+        y_ = tf.placeholder(tf.float32, [None, LABEL_SIZE])
 
         # must be 4-D with shape `[batch_size, height, width, channels]`
         x_image = tf.reshape(x, [-1, IMAGE_HEIGHT, IMAGE_WIDTH, 1])
@@ -96,39 +95,30 @@ def main(data_dir):
         h_fc1_drop = tf.nn.dropout(h_fc1, keep_prob)
 
     with tf.name_scope('readout'):
-        W1_fc2 = weight_variable([1024, LABEL_SIZE])
-        b1_fc2 = bias_variable([LABEL_SIZE])
+        W_fc2 = weight_variable([1024, LABEL_SIZE])
+        b_fc2 = bias_variable([LABEL_SIZE])
 
-        y1_conv = tf.matmul(h_fc1_drop, W1_fc2) + b1_fc2
-
-        W2_fc2 = weight_variable([1024, LABEL_SIZE])
-        b2_fc2 = bias_variable([LABEL_SIZE])
-
-        y2_conv = tf.matmul(h_fc1_drop, W2_fc2) + b2_fc2
+        y_conv = tf.matmul(h_fc1_drop, W_fc2) + b_fc2
 
     # Define loss and optimizer
     # Returns:
     # A 1-D `Tensor` of length `batch_size`
     # of the same type as `logits` with the softmax cross entropy loss.
     with tf.name_scope('loss'):
-        cross_entropy = (tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(labels=y1_, logits=y1_conv)) + 
-            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y1_, logits=y1_conv)))
+        cross_entropy = tf.reduce_mean(
+            # -tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1]))
+            tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=y_conv))
         train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy)
         variable_summaries(cross_entropy)
 
     # forword prop
-    predict_1 = tf.argmax(y1_conv, axis=1)
-    predict_2 = tf.argmax(y2_conv, axis=1)
-    expect_1 = tf.argmax(y1_, axis=1)
-    expect_2 = tf.argmax(y2_, axis=1)
+    predict = tf.argmax(y_conv, axis=1)
+    expect = tf.argmax(y_, axis=1)
 
     # evaluate accuracy
     with tf.name_scope('evaluate_accuracy'):
-        correct_prediction_1 = tf.equal(predict_1, expect_1)
-        correct_prediction_2 = tf.equal(predict_2, expect_2)
-        accuracy = (tf.reduce_mean(tf.cast(correct_prediction_1, tf.float32)) +
-                tf.reduce_mean(tf.cast(correct_prediction_2, tf.float32))) / 2.0
+        correct_prediction = tf.equal(predict, expect)
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         variable_summaries(accuracy)
 
     with tf.Session() as sess:
@@ -141,21 +131,19 @@ def main(data_dir):
 
         # Train
         for i in range(MAX_STEPS):
-            batch_xs, batch_ys_1, batch_ys_2 = train_data.next_batch(BATCH_SIZE)
+            batch_xs, batch_ys = train_data.next_batch(BATCH_SIZE)
 
-            step_summary, _ = sess.run([merged, train_step], feed_dict=
-                    {x: batch_xs, y1_: batch_ys_1, 
-                        y2_: batch_ys_2, keep_prob: 1.0})
+            step_summary, _ = sess.run([merged, train_step], feed_dict={x: batch_xs, y_: batch_ys, keep_prob: 1.0})
             train_writer.add_summary(step_summary, i)
 
             if i % 100 == 0:
                 # Test trained model
-                valid_summary, train_accuracy = sess.run([merged, accuracy], feed_dict={x: batch_xs, y1_: batch_ys_1, y2_: batch_ys_2, keep_prob: 1.0})
+                valid_summary, train_accuracy = sess.run([merged, accuracy], feed_dict={x: batch_xs, y_: batch_ys, keep_prob: 1.0})
                 train_writer.add_summary(valid_summary, i)
 
                 # final check after looping
-                test_x, test_y1, test_y2 = test_data.next_batch(2000)
-                test_summary, test_accuracy = sess.run([merged, accuracy], feed_dict={x: test_x, y1_: test_y1, y2_: test_y2, keep_prob: 1.0})
+                test_x, test_y = test_data.next_batch(2000)
+                test_summary, test_accuracy = sess.run([merged, accuracy], feed_dict={x: test_x, y_: test_y, keep_prob: 1.0})
                 test_writer.add_summary(test_summary, i)
 
                 print 'step %s, training accuracy = %.2f%%, testing accuracy = %.2f%%' % (i, train_accuracy * 100, test_accuracy * 100)
@@ -164,10 +152,14 @@ def main(data_dir):
         test_writer.close()
 
         # final check after looping
-        test_x, test_y1, test_y2 = test_data.next_batch(2000)
-        test_accuracy = accuracy.eval(feed_dict={x: test_x, y1_: test_y1, y2_: test_y2, keep_prob: 1.0})
+        test_x, test_y = test_data.next_batch(2000)
+        test_accuracy = accuracy.eval(feed_dict={x: test_x, y_: test_y, keep_prob: 1.0})
         print 'testing accuracy = %.2f%%' % (test_accuracy * 100, )
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data_dir', type=str, default='images/char-1-groups-1000/',
+                        help='Directory for storing input data')
+    FLAGS, unparsed = parser.parse_known_args()
+    tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
