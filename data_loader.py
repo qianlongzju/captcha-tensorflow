@@ -3,13 +3,14 @@ import os
 from PIL import Image
 import numpy as np
 import json
+current_dir = os.path.dirname(__file__)
 
 
 def load_data(data_dir, flatten=False):
     train_dir = os.path.join(data_dir, 'train')
     test_dir = os.path.join(data_dir, 'test')
 
-    meta_info = os.path.join(data_dir, 'meta.json')
+    meta_info = os.path.join(current_dir, 'meta.json')
     with open(meta_info, 'r') as f:
         meta = json.load(f)
 

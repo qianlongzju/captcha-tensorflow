@@ -11,9 +11,6 @@ BATCH_SIZE = 100
 
 LOG_DIR = 'log/cnn1-run-%s' % datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
-FLAGS = None
-
-
 def variable_summaries(var):
     """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
     with tf.name_scope('summaries'):
@@ -26,30 +23,9 @@ def variable_summaries(var):
         # tf.summary.scalar('min', tf.reduce_min(var))
         # tf.summary.histogram('histogram', var)
 
-
-#def weight_variable(shape):
-#    initial = tf.truncated_normal(shape, stddev=0.1)
-#    return tf.Variable(initial)
-#
-#
-#def bias_variable(shape):
-#    initial = tf.constant(0.1, shape=shape)
-#    return tf.Variable(initial)
-#
-#
-#def conv2d(x, W):
-#    return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
-#
-#
-#def max_pool_2x2(x):
-#    return tf.nn.avg_pool(x, ksize=[1, 2, 2, 1],
-#                          strides=[1, 2, 2, 1], padding='SAME')
-#
-
 def main(data_dir):
     # load data
     meta, train_data, test_data = data_loader.load_data(data_dir, flatten=False)
-    print 'data loaded'
     print 'train images: %s. test images: %s' % (train_data.images.shape[0], test_data.images.shape[0])
 
     LABEL_SIZE = meta['label_size']
@@ -70,57 +46,26 @@ def main(data_dir):
 
     # define the model
     with tf.name_scope('convolution-layer-1'):
-        #W_conv1 = weight_variable([3, 3, 1, 32])
-        #b_conv1 = bias_variable([32])
-
-        #h_conv1 = tf.nn.tanh(conv2d(x_image, W_conv1) + b_conv1)
-        #h_pool1 = max_pool_2x2(h_conv1)
-
         h_conv1 = tf.layers.conv2d(x_image, 32, 7, 1, 'same', activation=tf.nn.relu)
         h_pool1 = tf.layers.max_pooling2d(h_conv1, 2, 2)
 
     with tf.name_scope('convolution-layer-2'):
-        #W_conv2 = weight_variable([3, 3, 32, 64])
-        #b_conv2 = bias_variable([64])
-
-        #h_conv2 = tf.nn.tanh(conv2d(h_pool1, W_conv2) + b_conv2)
-        #h_pool2 = max_pool_2x2(h_conv2)
-
         h_conv2 = tf.layers.conv2d(h_pool1, 64, 5, 1, 'same', activation=tf.nn.relu)
         h_pool2 = tf.layers.max_pooling2d(h_conv2, 2, 2)
 
     with tf.name_scope('densely-connected'):
         h_pool2_flat = tf.reshape(h_pool2, [-1, IMAGE_WIDTH*IMAGE_HEIGHT*4])
-
-        #W1_fc1 = weight_variable([IMAGE_WIDTH * IMAGE_HEIGHT * 4, 1024])
-        #b1_fc1 = bias_variable([1024])
-        #h1_fc1 = tf.nn.tanh(tf.matmul(h_pool2_flat, W1_fc1) + b1_fc1)
         h_fc1 = tf.layers.dense(h_pool2_flat, 1024)
 
-        #W2_fc1 = weight_variable([IMAGE_WIDTH * IMAGE_HEIGHT * 4, 1024])
-        #b2_fc1 = bias_variable([1024])
-        #h2_fc1 = tf.nn.tanh(tf.matmul(h_pool2_flat, W2_fc1) + b2_fc1)
-        #h2_fc1 = tf.layers.dense(h_pool2_flat, 1024)
-
-
     with tf.name_scope('dropout'):
-        # To reduce overfitting, we will apply dropout before the readout layer
-        keep_prob = tf.placeholder(tf.float32)
+        # To reduce overfitting, we will apply dropout before the out layer
         tf_is_training = tf.placeholder(tf.bool, None)
-        #h1_fc1_drop = tf.nn.dropout(h1_fc1, keep_prob)
-        #h2_fc1_drop = tf.nn.dropout(h2_fc1, keep_prob)
         h_fc1_drop = tf.layers.dropout(h_fc1, rate=0.5, training=tf_is_training)
 
-    with tf.name_scope('readout'):
-        #W1_fc2 = weight_variable([1024, LABEL_SIZE])
-        #b1_fc2 = bias_variable([LABEL_SIZE])
-        #y1_conv = tf.matmul(h1_fc1_drop, W1_fc2) + b1_fc2
-        y1_conv = tf.layers.dense(h_fc1_drop, LABEL_SIZE)
+    with tf.name_scope('out'):
+        output_1 = tf.layers.dense(h_fc1_drop, LABEL_SIZE)
 
-        #W2_fc2 = weight_variable([1024, LABEL_SIZE])
-        #b2_fc2 = bias_variable([LABEL_SIZE])
-        #y2_conv = tf.matmul(h2_fc1_drop, W2_fc2) + b2_fc2
-        y2_conv = tf.layers.dense(h_fc1_drop, LABEL_SIZE)
+        output_2 = tf.layers.dense(h_fc1_drop, LABEL_SIZE)
 
     # Define loss and optimizer
     # Returns:
@@ -128,16 +73,16 @@ def main(data_dir):
     # of the same type as `logits` with the softmax cross entropy loss.
     with tf.name_scope('loss'):
         cross_entropy = (
-            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y1_, logits=y1_conv)) 
+            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y1_, logits=output_1)) 
             + 
-            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y2_, logits=y2_conv))
+            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y2_, logits=output_2))
             )
         train_step = tf.train.AdamOptimizer(0.0001).minimize(cross_entropy)
         variable_summaries(cross_entropy)
 
     # forword prop
-    predict_1 = tf.argmax(y1_conv, axis=1)
-    predict_2 = tf.argmax(y2_conv, axis=1)
+    predict_1 = tf.argmax(output_1, axis=1)
+    predict_2 = tf.argmax(output_2, axis=1)
     expect_1 = tf.argmax(y1_, axis=1)
     expect_2 = tf.argmax(y2_, axis=1)
 
@@ -186,7 +131,7 @@ def main(data_dir):
 
         # final check after looping
         test_x, test_y1, test_y2 = test_data.next_batch(2000)
-        test_accuracy = accuracy.eval(feed_dict={x: test_x, y1_: test_y1, y2_: test_y2, keep_prob: 1.0})
+        test_accuracy = accuracy.eval(feed_dict={x: test_x, y1_: test_y1, y2_: test_y2, tf_is_training: False})
         print 'testing accuracy = %.2f%%' % (test_accuracy * 100, )
 
 
