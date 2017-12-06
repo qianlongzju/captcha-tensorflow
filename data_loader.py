@@ -10,7 +10,7 @@ def load_data(data_dir, flatten=False):
     train_dir = os.path.join(data_dir, 'train')
     test_dir = os.path.join(data_dir, 'test')
 
-    meta_info = os.path.join(current_dir, 'meta.json')
+    meta_info = os.path.join(data_dir, 'meta.json')
     with open(meta_info, 'r') as f:
         meta = json.load(f)
 
@@ -25,10 +25,9 @@ def load_data(data_dir, flatten=False):
 
 class DataSet:
     """提供 next_batch 方法"""
-    def __init__(self, images, labels_1, labels_2):
+    def __init__(self, images, labels):
         self._images = images
-        self._labels_1 = labels_1
-        self._labels_2 = labels_2
+        self._labels = labels
         self._num_examples = images.shape[0]
         self.ptr = 0
 
@@ -37,12 +36,8 @@ class DataSet:
         return self._images
 
     @property
-    def labels_1(self):
-        return self._labels_1
-
-    @property
-    def labels_2(self):
-        return self._labels_2
+    def labels(self):
+        return self._labels
 
     def next_batch(self, size=100, shuffle=True):
         if self.ptr + size > self._num_examples:
@@ -53,28 +48,24 @@ class DataSet:
                 perm = np.arange(self._num_examples)
                 np.random.shuffle(perm)
                 self._images = self._images[perm]
-                self._labels_1 = self._labels_1[perm]
-                self._labels_2 = self._labels_2[perm]
+                self._labels = self._labels[perm]
 
         self.ptr += size
         return (
             self._images[self.ptr - size: self.ptr],
-            self._labels_1[self.ptr - size: self.ptr],
-            self._labels_2[self.ptr - size: self.ptr],
+            self._labels[self.ptr - size: self.ptr],
         )
 
 
 def _read_images_and_labels(dir_name, flatten, ext='.png', **meta):
     images = []
-    labels_1 = []
-    labels_2 = []
+    labels = []
     for fn in os.listdir(dir_name):
         if fn.endswith(ext):
             fd = os.path.join(dir_name, fn)
             images.append(_read_image(fd, flatten=flatten, **meta))
-            labels_1.append(_read_lable(fd, 0, **meta))
-            labels_2.append(_read_lable(fd, 1, **meta))
-    return np.array(images), np.array(labels_1), np.array(labels_2)
+            labels.append(_read_lable(fd, **meta))
+    return np.array(images), np.array(labels)
 
 
 def _read_image(filename, flatten, width, height, **extra_meta):
@@ -84,13 +75,15 @@ def _read_image(filename, flatten, width, height, **extra_meta):
         return data.reshape(width * height)
     return data
 
-def _read_lable(filename, index, label_choices, **extra_meta):
+def _read_lable(filename, label_choices, **extra_meta):
     basename = os.path.basename(filename)
-    data = np.zeros(len(label_choices))
-    c = basename.split('_')[0][index]
-    idx = label_choices.index(c)
-    data[idx] = 1
-    return data
+    data_list = []
+    for c in basename.split('_')[0]:
+        data = np.zeros(len(label_choices))
+        idx = label_choices.index(c)
+        data[idx] = 1
+        data_list.append(data)
+    return np.concatenate(data_list)
 
 if __name__ == '__main__':
     meta, train, test = load_data('images/char-2-groups-10')
