@@ -3,6 +3,7 @@ import argparse
 import datetime
 import sys
 import tensorflow as tf
+import numpy as np
 
 import data_loader
 
@@ -28,6 +29,7 @@ def main(data_dir):
     meta, train_data, test_data = data_loader.load_data(data_dir, flatten=False)
     print 'train images: %s. test images: %s' % (train_data.images.shape[0], test_data.images.shape[0])
 
+    NUM_PER_IMAGE = meta['num_per_image']
     LABEL_SIZE = meta['label_size']
     IMAGE_HEIGHT = meta['height']
     IMAGE_WIDTH = meta['width']
@@ -37,8 +39,7 @@ def main(data_dir):
     # variable in the graph for input data
     with tf.name_scope('input'):
         x = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH])
-        y1_ = tf.placeholder(tf.float32, [None, LABEL_SIZE])
-        y2_ = tf.placeholder(tf.float32, [None, LABEL_SIZE])
+        y_ = [tf.placeholder(tf.float32, [None, LABEL_SIZE]) for _ in range(NUM_PER_IMAGE)]
 
         # must be 4-D with shape `[batch_size, height, width, channels]`
         x_image = tf.reshape(x, [-1, IMAGE_HEIGHT, IMAGE_WIDTH, 1])
@@ -63,38 +64,26 @@ def main(data_dir):
         h_fc1_drop = tf.layers.dropout(h_fc1, rate=0.5, training=tf_is_training)
 
     with tf.name_scope('out'):
-        output_1 = tf.layers.dense(h_fc1_drop, LABEL_SIZE)
-
-        output_2 = tf.layers.dense(h_fc1_drop, LABEL_SIZE)
+        y = [tf.layers.dense(h_fc1_drop, LABEL_SIZE) for _ in range(NUM_PER_IMAGE)]
 
     # Define loss and optimizer
     # Returns:
     # A 1-D `Tensor` of length `batch_size`
     # of the same type as `logits` with the softmax cross entropy loss.
     with tf.name_scope('loss'):
-        cross_entropy = (
-            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y1_, logits=output_1)) 
-            + 
-            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y2_, logits=output_2))
-            )
+        cross_entropy = 0
+        accuracy = 0
+        for label, logit in zip(y_, y):
+            diff = tf.nn.softmax_cross_entropy_with_logits(labels=label, logits=logit)
+            cross_entropy += tf.reduce_mean(diff)
+
+            predict = tf.argmax(logit, axis=1)
+            expect = tf.argmax(label, axis=1)
+            correct_prediction = tf.equal(predict, expect)
+            accuracy += tf.reduce_mean(tf.cast(correct_prediction, tf.float32)) 
         train_step = tf.train.AdamOptimizer(0.0001).minimize(cross_entropy)
         variable_summaries(cross_entropy)
-
-    # forword prop
-    predict_1 = tf.argmax(output_1, axis=1)
-    predict_2 = tf.argmax(output_2, axis=1)
-    expect_1 = tf.argmax(y1_, axis=1)
-    expect_2 = tf.argmax(y2_, axis=1)
-
-    # evaluate accuracy
-    with tf.name_scope('evaluate_accuracy'):
-        correct_prediction_1 = tf.equal(predict_1, expect_1)
-        correct_prediction_2 = tf.equal(predict_2, expect_2)
-        accuracy = (
-                tf.reduce_mean(tf.cast(correct_prediction_1, tf.float32)) 
-                +
-                tf.reduce_mean(tf.cast(correct_prediction_2, tf.float32))
-                ) / 2.0
+        accuracy /= NUM_PER_IMAGE
         variable_summaries(accuracy)
 
     with tf.Session() as sess:
@@ -107,21 +96,26 @@ def main(data_dir):
 
         # Train
         for i in range(MAX_STEPS):
-            batch_xs, batch_ys_1, batch_ys_2 = train_data.next_batch(BATCH_SIZE)
-            #print len(batch_xs), len(batch_ys_1), len(batch_ys_2)
+            batch_xs, batch_ys = train_data.next_batch(BATCH_SIZE)
+            mapping = {label: ys for label, ys in zip(y_, np.split(batch_ys, NUM_PER_IMAGE, axis=1))}
+            mapping[x] = batch_xs
+            mapping[tf_is_training] = True
 
-            step_summary, _ = sess.run([merged, train_step], feed_dict=
-                    {x: batch_xs, y1_: batch_ys_1, y2_: batch_ys_2, tf_is_training:True})
+            step_summary, _ = sess.run([merged, train_step], feed_dict=mapping)
             train_writer.add_summary(step_summary, i)
 
             if i % 100 == 0:
                 # Test trained model
-                valid_summary, train_accuracy = sess.run([merged, accuracy], feed_dict={x: batch_xs, y1_: batch_ys_1, y2_: batch_ys_2, tf_is_training: False})
+                mapping[tf_is_training] = False
+                valid_summary, train_accuracy = sess.run([merged, accuracy], feed_dict=mapping)
                 train_writer.add_summary(valid_summary, i)
 
                 # final check after looping
-                test_x, test_y1, test_y2 = test_data.next_batch(200)
-                test_summary, test_accuracy = sess.run([merged, accuracy], feed_dict={x: test_x, y1_: test_y1, y2_: test_y2, tf_is_training: False})
+                test_x, test_y = test_data.next_batch(2000)
+                mapping = {label: ys for label, ys in zip(y_, np.split(test_y, NUM_PER_IMAGE, axis=1))}
+                mapping[x] = test_x
+                mapping[tf_is_training] = False
+                test_summary, test_accuracy = sess.run([merged, accuracy], feed_dict=test_mapping)
                 test_writer.add_summary(test_summary, i)
 
                 print 'step %s, training accuracy = %.2f%%, testing accuracy = %.2f%%' % (i, train_accuracy * 100, test_accuracy * 100)
@@ -130,8 +124,11 @@ def main(data_dir):
         test_writer.close()
 
         # final check after looping
-        test_x, test_y1, test_y2 = test_data.next_batch(2000)
-        test_accuracy = accuracy.eval(feed_dict={x: test_x, y1_: test_y1, y2_: test_y2, tf_is_training: False})
+        test_x, test_y = test_data.next_batch(2000)
+        mapping = {label: ys for label, ys in zip(y_, np.split(test_y, NUM_PER_IMAGE, axis=1))}
+        mapping[x] = test_x
+        mapping[tf_is_training] = False
+        test_accuracy = accuracy.eval(feed_dict=mapping)
         print 'testing accuracy = %.2f%%' % (test_accuracy * 100, )
 
 
