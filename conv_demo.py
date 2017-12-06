@@ -115,7 +115,7 @@ def main(data_dir):
                 mapping = {label: ys for label, ys in zip(y_, np.split(test_y, NUM_PER_IMAGE, axis=1))}
                 mapping[x] = test_x
                 mapping[tf_is_training] = False
-                test_summary, test_accuracy = sess.run([merged, accuracy], feed_dict=test_mapping)
+                test_summary, test_accuracy = sess.run([merged, accuracy], feed_dict=mapping)
                 test_writer.add_summary(test_summary, i)
 
                 print 'step %s, training accuracy = %.2f%%, testing accuracy = %.2f%%' % (i, train_accuracy * 100, test_accuracy * 100)
