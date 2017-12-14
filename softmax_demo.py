@@ -40,7 +40,8 @@ def main(image_dir):
         expect = tf.argmax(label, axis=1)
         correct_prediction = tf.equal(predict, expect)
         accuracy += tf.reduce_mean(tf.cast(correct_prediction, tf.float32)) 
-    train_step = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy)
+   # train_step = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy)
+    train_step = tf.train.AdamOptimizer(0.0001).minimize(cross_entropy)
     accuracy /= NUM_PER_IMAGE
 
     with tf.Session() as sess:
